@@ -3,7 +3,16 @@ from config import Config
 from models import db
 from flask import request, jsonify
 from werkzeug.security import generate_password_hash
+from werkzeug.security import check_password_hash
 from models import User
+import redis
+
+r = redis.Redis(
+    host=app.config["REDIS_HOST"],
+    port=app.config["REDIS_PORT"],
+    db=0,
+    decode_responses=True
+)
 
 app=Flask(__name__)
 app.config.from_object(Config) #Config -> app.config
@@ -32,6 +41,8 @@ def register():
         return jsonify({"error": "email and password required"}), 400
     if len(password)<8:
         return jsonify({"error": "password must be at least 8 characters"})
+    if len(password)>128:
+        return jsonify({"error":"password is too long. Password can be at maxiumum 128 characters in length"})
 
     #uniqueness
     existing = User.query.filter_by(email=email).first()
@@ -47,9 +58,47 @@ def register():
     return jsonify({"ok":True,
                     "message":"registered"}),201
 
-    @app.get("/health") #if it returns 200, the system is awake
+    @app.get("/health") #if it returns 200, the system is healthy
     def health():
         return jsonify({ok:True}),200
+    
+@app.post("/auth/login")
+def login():
+
+
+    data = request.get_json(silent=True) or {}
+
+    email = (data.get("email") or "").strip().lower()
+    password= (data.get("password") or "")
+
+    if not email or not password:
+        return jsonify({"error": "email and password required"}), 400
+    
+    ip = request.remote_addr
+    key = f"login:ip:{ip}"
+
+    attempts = r.incr(key)
+
+    if attempts == 1:
+        r.expire(key,60)
+
+    if attempts > 5:
+        return jsonify({"error": "too many attempts"}), 429
+
+   
+    existing = User.query.filter_by(email=email).first()
+    
+    if not existing or not check_password_hash(existing.password_hash, password):
+        return jsonify({"error": "invalid credentials"}), 401
+    
+    return jsonify({"message":"login successful"}),200
+
+
+    
+    
+
+
+
 
 if __name__ == "__main__":
     app.run(debug=True)

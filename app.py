@@ -62,6 +62,9 @@ def register():
     def health():
         return jsonify({ok:True}),200
     
+
+FAKE_HASH = generate_password_hash("fake-password") #for timing attack security
+
 @app.post("/auth/login")
 def login():
 
@@ -73,10 +76,15 @@ def login():
 
     if not email or not password:
         return jsonify({"error": "email and password required"}), 400
-    
+
+    email_key=f"login:email:{email}"
+    email_attempts = r.get(email_key)
+
+    if email_attempts and int(email_attempts) >= 5:
+        return jsonify({"error": "account temporarily locked"}), 403
+
     ip = request.remote_addr
     key = f"login:ip:{ip}"
-
     attempts = r.incr(key)
 
     if attempts == 1:
@@ -85,17 +93,28 @@ def login():
     if attempts > 5:
         return jsonify({"error": "too many attempts"}), 429
 
-   
+    #fake hash for timing attack   
     existing = User.query.filter_by(email=email).first()
+
+    if existing:
+        password_ok=check_password_hash(existing.password_hash,password)
+    else:
+        check_password_hash(FAKE_HASH,password)
+        password_ok = False 
+
+    if not password_ok:
+        return jsonify({"error":"invalid credentials"}),401
     
-    if not existing or not check_password_hash(existing.password_hash, password):
-        return jsonify({"error": "invalid credentials"}), 401
-    
+    """if not existing or not check_password_hash(existing.password_hash, password):
+        fail_count = r.incr(email_key)
+        if fail_count == 1:
+            r.expire(email_key,600) #10 minute lock window    
+        return jsonify({"error": "invalid credentials"}), 401"""
+    r.delete(email_key)
+
     return jsonify({"message":"login successful"}),200
 
 
-    
-    
 
 
 

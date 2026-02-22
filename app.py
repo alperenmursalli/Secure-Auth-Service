@@ -6,6 +6,7 @@ from werkzeug.security import generate_password_hash
 from werkzeug.security import check_password_hash
 from models import User
 import redis
+from sqlalchemy.exc import IntegrityError
 
 r = redis.Redis(
     host=app.config["REDIS_HOST"],
@@ -30,9 +31,6 @@ def home():
 def register():
     data = request.get_json(silent=True) or {} #if no JSOn , it will not crash
 
-    email = data.get("email")
-    password = data.get("password")
-
     email=(data.get("email") or "").strip().lower()
     password=(data.get("password") or"")
 
@@ -40,9 +38,9 @@ def register():
     if not email or not password:
         return jsonify({"error": "email and password required"}), 400
     if len(password)<8:
-        return jsonify({"error": "password must be at least 8 characters"})
+        return jsonify({"error": "password must be at least 8 characters"}),400
     if len(password)>128:
-        return jsonify({"error":"password is too long. Password can be at maxiumum 128 characters in length"})
+        return jsonify({"error":"password is too long. Password can be at maxiumum 128 characters in length"}),400
 
     #uniqueness
     existing = User.query.filter_by(email=email).first()
@@ -50,18 +48,21 @@ def register():
         return jsonify({"error":"email already exists"}),409
 
     password_hash= generate_password_hash(password)
-
     user= User(email=email, password_hash=password_hash)
-    db.session.add(user)
-    db.session.commit()
-
+    try: #production pattern
+        db.session.add(user)
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"error":"email already exists"}),409
+    #its dangerous to use email exists message for user enumeration but better for UX
     return jsonify({"ok":True,
                     "message":"registered"}),201
 
-    @app.get("/health") #if it returns 200, the system is healthy
-    def health():
-        return jsonify({ok:True}),200
-    
+@app.get("/health") #if it returns 200, the system is healthy
+def health():
+    return jsonify({"ok":True}),200
+
 
 FAKE_HASH = generate_password_hash("fake-password") #for timing attack security
 

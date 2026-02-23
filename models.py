@@ -29,3 +29,6 @@ class User(db.Model):
         default=datetime.utcnow,
         nullable=False
     )
+    token_version = db.Column(
+        db.Integer, default=0
+        )

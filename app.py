@@ -8,6 +8,9 @@ from models import User
 import redis
 from sqlalchemy.exc import IntegrityError
 
+app=Flask(__name__)
+app.config.from_object(Config) #Config -> app.config
+
 r = redis.Redis(
     host=app.config["REDIS_HOST"],
     port=app.config["REDIS_PORT"],
@@ -15,8 +18,7 @@ r = redis.Redis(
     decode_responses=True
 )
 
-app=Flask(__name__)
-app.config.from_object(Config) #Config -> app.config
+
 
 db.init_app(app) #connected to Flask
 
@@ -27,7 +29,7 @@ with app.app_context():
 def home():
     return "Auth Service Running"
 
-@app.route("/auth/register")
+@app.post("/auth/register")
 def register():
     data = request.get_json(silent=True) or {} #if no JSOn , it will not crash
 
@@ -115,6 +117,37 @@ def login():
 
     return jsonify({"message":"login successful"}),200
 
+@app.post("/auth/reset-password")
+def reset_password():
+    data = request.get_json(silent=True) or {}
+
+    token = data.get("token") or ""
+    new_password = data.get("new_password") or ""
+
+    if not token or not new_password:
+        return jsonify({"error": "token and new_password required"}),400
+    
+    if len(new_password) < 8 or len(new_password) > 128:
+        return jsonify({"error":"invalid password length"}),400
+    
+    import hashlib
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+    user_id = r.get(f"reset:{token_hash}")
+    if not user_id:
+        return jsonify({"error":"invalid or expired token"}),400
+    
+    user = User.query.get(int(user_id))
+    if not user:
+        return jsonify({"error":"invalid token"}),400
+    
+    user.password_hash = generate_password_hash(new_password)
+    user.token_version += 1
+    db.session.commit()
+
+    r.delete(f"reset:{token_hash}")
+
+    return jsonify({"message":"password updated"}),200
 
 
 
